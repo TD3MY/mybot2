@@ -1,0 +1,62 @@
+[
+  {
+    "time": "2026-08-17 18:02:13",
+    "role": "user",
+    "content": "سلام چطوری"
+  },
+  {
+    "time": "2026-08-17 18:02:16",
+    "role": "bot",
+    "content": "سلام، خوبم ممنون. شما چطورید؟"
+  },
+  {
+    "time": "2026-08-17 18:02:22",
+    "role": "user",
+    "content": "اسمت چیه"
+  },
+  {
+    "time": "2026-08-17 18:02:29",
+    "role": "bot",
+    "content": "اسم من Voidra است و توسط @TD3MY ساخته شدم."
+  },
+  {
+    "time": "2026-08-17 18:40:22",
+    "role": "user",
+    "content": "python main.py"
+  },
+  {
+    "time": "2026-08-17 18:40:26",
+    "role": "bot",
+    "content": "\"python main.py\" is normally used to run a Python script called main.py from your terminal or command prompt. Make sure Python is installed, and that you are in the correct directory where main.py is located.\n\nIf you meant something else, let me know — for example, are you trying to run your own project, debug an error, or asking what the file should contain?"
+  },
+  {
+    "time": "2026-08-17 20:32:38",
+    "role": "user",
+    "content": "سباح"
+  },
+  {
+    "time": "2026-08-17 20:32:46",
+    "role": "bot",
+    "content": "هل تقصد السباحة؟ أخبرني كيف يمكنني مساعدتك."
+  },
+  {
+    "time": "2026-08-17 23:41:49",
+    "role": "user",
+    "content": "https://t.me/Apex_m4"
+  },
+  {
+    "time": "2026-08-17 23:41:56",
+    "role": "bot",
+    "content": "I see you've shared a Telegram link. Would you like me to help with something related to that channel or group?"
+  },
+  {
+    "time": "2026-08-17 23:42:23",
+    "role": "user",
+    "content": "چی نوشتی اینجا"
+  },
+  {
+    "time": "2026-08-17 23:42:28",
+    "role": "bot",
+    "content": "من نوشتم که لینک تلگرام را دیدم و پرسیدم آیا کمک خاصی از من میخواهید. اگر منظور دیگری دارید یا توضیح بیشتری میخواهید، بگویید."
+  }
+]
