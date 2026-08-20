@@ -1426,6 +1426,13 @@ def chat_with_ai(message):
 # Bot startup
 # ---------------------------------------------------------------------------
 
+from flask import Flask
+app = Flask(__name__)
+
+@app.route("/")
+def index():
+    return "ok"
+
 if __name__ == "__main__":
     logger.info("Bot starting...")
     print("🧠 Voidra AI is running... 🧠")
