@@ -1440,6 +1440,9 @@ if __name__ == "__main__":
     print(f"📋 Log file: {LOG_FILE}")
     print(f"👤 Admin ID: {ADMIN_ID}")
 
+    from threading import Thread
+    Thread(target=lambda: app.run(host="0.0.0.0", port=10000)).start()
+
     while True:
         try:
             bot.infinity_polling(timeout=60, long_polling_timeout=60)
