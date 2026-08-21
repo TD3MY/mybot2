@@ -568,6 +568,37 @@ def notify_admin_once(user):
 # ---------------------------------------------------------------------------
 # Telegram bot instance
 # ---------------------------------------------------------------------------
+
+
+import zipfile
+import threading
+
+def backup_data_to_admin():
+    try:
+        zpath = DATA_DIR / "bot_backup.zip"
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file in DATA_DIR.rglob("*"):
+                if file.is_file() and file.name != "bot_backup.zip":
+                    zf.write(file, file.relative_to(DATA_DIR))
+        with open(zpath, "rb") as f:
+            bot.send_document(ADMIN_ID, f)
+    except Exception as e:
+        logger.error(f"backup failed: {e}")
+
+def start_backup_scheduler():
+    def run_loop():
+        while True:
+            try:
+                backup_data_to_admin()
+            except Exception as e:
+                logger.error(f"backup scheduler error: {e}")
+            time.sleep(6 * 3600)
+
+    t = threading.Thread(target=run_loop, daemon=True)
+    t.start()
+
+
+
 bot = telebot.TeleBot(TOKEN)
 
 
@@ -1761,6 +1792,14 @@ def handle_group(message):
         logger.error(f"group handler error: {e}")
 
 
+@bot.message_handler(commands=['backup'])
+def cmd_backup(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    backup_data_to_admin()
+    bot.reply_to(message, "✅ backup sent")
+
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     """Handle /start command."""
@@ -1793,6 +1832,29 @@ def send_help(message):
     except Exception:
         bot.reply_to(message, "🧠 I am an AI built by @TD3MY. Still a work in progress 🧠")
 
+
+@bot.message_handler(commands=['restore'])
+def restore_backup(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "⛔ You are not authorized")
+        return
+    try:
+        if message.reply_to_message and message.reply_to_message.document:
+            file_info = bot.get_file(message.reply_to_message.document.file_id)
+            url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
+            r = requests.get(url, timeout=120)
+            zpath = DATA_DIR / "restore.zip"
+            with open(zpath, "wb") as f:
+                f.write(r.content)
+            import zipfile
+            with zipfile.ZipFile(zpath, "r") as zf:
+                zf.extractall(DATA_DIR)
+            bot.reply_to(message, "✅ Data restored successfully.")
+        else:
+            bot.reply_to(message, "⚠️ Reply to a backup zip file with /restore.")
+    except Exception as e:
+        logger.error(f"restore failed: {e}")
+        bot.reply_to(message, "❌ Restore failed.")
 
 @bot.message_handler(commands=['reset'])
 def reset_memory(message):
@@ -2167,6 +2229,8 @@ def index():
 
 if __name__ == "__main__":
     logger.info("Bot starting...")
+    backup_data_to_admin()
+    start_backup_scheduler()
     print("🧠 Voidra AI is running... 🧠")
     print(f"📁 Data directory: {DATA_DIR}")
     print(f"📋 Log file: {LOG_FILE}")
