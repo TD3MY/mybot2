@@ -540,9 +540,13 @@ def get_group_status(chat_id):
     groups = load_groups()
     return groups.get(str(chat_id), {})
 
-def set_group_status(chat_id, status):
+def set_group_status(chat_id, status, title=None):
     groups = load_groups()
-    groups[str(chat_id)] = {"status": status}
+    if str(chat_id) not in groups:
+        groups[str(chat_id)] = {}
+    groups[str(chat_id)]["status"] = status
+    if title:
+        groups[str(chat_id)]["title"] = title
     save_groups(groups)
 
 def set_group_policy(chat_id, policy):
@@ -689,10 +693,50 @@ def cb_panel_groups(call):
         text += "None\n"
     markup = types.InlineKeyboardMarkup()
     if pending:
-        markup.add(types.InlineKeyboardButton("✅ Approve First", callback_data="group_approve_first"))
+        for i, req in enumerate(pending, 1):
+            cid = req.get("chat_id", "")
+            markup.add(
+                types.InlineKeyboardButton(f"✅ Approve #{i}", callback_data=f"group_approve:{cid}"),
+                types.InlineKeyboardButton(f"❌ Reject #{i}", callback_data=f"group_reject:{cid}"),
+            )
     markup.add(types.InlineKeyboardButton("🔙 Back", callback_data="panel_main"))
     _edit_or_send(call.message.chat.id, call.message.message_id, text, markup)
     bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("group_approve:"))
+def cb_group_approve(call):
+    if not _require_admin(call):
+        return
+    chat_id = call.data.split(":", 1)[1]
+    pending = load_json(DATA_DIR / "group_requests.json", [])
+    req = next((r for r in pending if r.get("chat_id") == chat_id), None)
+    if req:
+        pending = [r for r in pending if r.get("chat_id") != chat_id]
+        save_json(DATA_DIR / "group_requests.json", pending)
+        set_group_status(chat_id, "approved", title=req.get("title"))
+        try:
+            bot.send_message(int(chat_id), "✅ This group has been approved by the admin.")
+        except Exception as e:
+            logger.error(f"Failed to notify group {chat_id}: {e}")
+    cb_panel_groups(call)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("group_reject:"))
+def cb_group_reject(call):
+    if not _require_admin(call):
+        return
+    chat_id = call.data.split(":", 1)[1]
+    pending = load_json(DATA_DIR / "group_requests.json", [])
+    req = next((r for r in pending if r.get("chat_id") == chat_id), None)
+    if req:
+        pending = [r for r in pending if r.get("chat_id") != chat_id]
+        save_json(DATA_DIR / "group_requests.json", pending)
+        try:
+            bot.send_message(int(chat_id), "❌ Bot access to this group was rejected by the admin.")
+            bot.leave_chat(int(chat_id))
+        except Exception as e:
+            logger.error(f"Failed to leave rejected group {chat_id}: {e}")
+    cb_panel_groups(call)
 
 @bot.callback_query_handler(func=lambda call: call.data == "panel_main")
 def cb_panel_main(call):
@@ -1499,13 +1543,13 @@ def handle_new_chat_members(message):
         for member in message.new_chat_members:
             if member.id == bot.get_me().id:
                 chat_id = str(message.chat.id)
-                set_group_status(chat_id, "pending")
+                set_group_status(chat_id, "pending", title=message.chat.title)
                 bot.send_message(
                     message.chat.id,
                     "This bot needs admin approval to work in this group."
                 )
                 pending = load_json(DATA_DIR / "group_requests.json", [])
-                if chat_id not in pending:
+                if not any(r.get("chat_id") == chat_id for r in pending):
                     pending.append({"chat_id": chat_id, "title": message.chat.title})
                     save_json(DATA_DIR / "group_requests.json", pending)
                 bot.send_message(ADMIN_ID, f"📥 New group request from {message.chat.title}")
