@@ -183,19 +183,36 @@ def is_user_blocked(user_id):
     return str(user_id) in get_blocked()
 
 
-def block_user(user_id):
-    """Add user to blocked list. Returns True if newly blocked."""
+BLOCKED_META_FILE = DATA_DIR / "blocked_meta.json"  # keeps WHY/WHERE each global block happened, never wiped
+
+
+def get_blocked_meta():
+    return load_json(BLOCKED_META_FILE, {})
+
+
+def save_blocked_meta(meta):
+    save_json(BLOCKED_META_FILE, meta)
+
+
+def block_user(user_id, reason="manual", source="admin"):
+    """Add user to global blocked list. reason: 'bot_insult' | 'group_ban_policy' | 'manual'. source: 'bot_direct' or a group chat_id or 'admin'."""
     blocked = get_blocked()
     if str(user_id) not in blocked:
         blocked.append(str(user_id))
         save_blocked(blocked)
-        logger.info(f"User {user_id} blocked by admin")
-        return True
-    return False
+    meta = get_blocked_meta()
+    meta[str(user_id)] = {
+        "reason": reason,
+        "source": source,
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    save_blocked_meta(meta)
+    logger.info(f"User {user_id} blocked ({reason} / {source})")
+    return True
 
 
 def unblock_user(user_id):
-    """Remove user from blocked list. Returns True if was blocked."""
+    """Remove user from blocked list. History (blocked_meta) is kept, not deleted, so it still shows the last reason."""
     blocked = get_blocked()
     if str(user_id) in blocked:
         blocked.remove(str(user_id))
@@ -333,11 +350,38 @@ BADWORD_CHECK_PROMPT = (
     "Reply with exactly YES or NO.\n\nUser message: "
 )
 
-warnings = {}
+BOT_WARNINGS_FILE = DATA_DIR / "bot_warnings.json"  # global warnings for insults aimed at the bot itself
 
-def warn_user(user_id):
-    warnings[user_id] = warnings.get(user_id, 0) + 1
-    return warnings[user_id]
+
+def warn_user_global(user_id):
+    """Warning counter for insults aimed directly at the bot (PV or mention/reply in any group). Persisted, shared across all chats."""
+    data = load_json(BOT_WARNINGS_FILE, {})
+    uid = str(user_id)
+    data[uid] = data.get(uid, 0) + 1
+    save_json(BOT_WARNINGS_FILE, data)
+    return data[uid]
+
+
+def warn_user_in_group(chat_id, user_id):
+    """Warning counter for ordinary profanity inside a specific group. Persisted per-group, independent of other groups."""
+    groups = load_groups()
+    cid = str(chat_id)
+    uid = str(user_id)
+    if cid not in groups:
+        groups[cid] = {}
+    warns = groups[cid].setdefault("warnings", {})
+    warns[uid] = warns.get(uid, 0) + 1
+    save_groups(groups)
+    return warns[uid]
+
+
+def reset_group_warnings(chat_id, user_id):
+    groups = load_groups()
+    cid = str(chat_id)
+    uid = str(user_id)
+    if cid in groups and "warnings" in groups[cid]:
+        groups[cid]["warnings"].pop(uid, None)
+        save_groups(groups)
 
 def check_badwords(user_text):
     try:
@@ -540,14 +584,21 @@ def get_group_status(chat_id):
     groups = load_groups()
     return groups.get(str(chat_id), {})
 
+
 def set_group_status(chat_id, status, title=None):
+    """Update a group's status without wiping its policy/blocked_users/warnings history."""
     groups = load_groups()
-    if str(chat_id) not in groups:
-        groups[str(chat_id)] = {}
-    groups[str(chat_id)]["status"] = status
+    cid = str(chat_id)
+    if cid not in groups:
+        groups[cid] = {}
+    groups[cid]["status"] = status
     if title:
-        groups[str(chat_id)]["title"] = title
+        groups[cid]["title"] = title
+    groups[cid].setdefault("policy", "kick")
+    groups[cid].setdefault("blocked_users", {})
+    groups[cid].setdefault("warnings", {})
     save_groups(groups)
+
 
 def set_group_policy(chat_id, policy):
     groups = load_groups()
@@ -555,6 +606,47 @@ def set_group_policy(chat_id, policy):
         groups[str(chat_id)] = {}
     groups[str(chat_id)]["policy"] = policy
     save_groups(groups)
+
+
+def group_block_user(chat_id, user_id, name, block_type, warnings_count=0):
+    """Record a user as blocked within a specific group (kick=local, ban=global marker mirrored here too)."""
+    groups = load_groups()
+    cid = str(chat_id)
+    uid = str(user_id)
+    if cid not in groups:
+        groups[cid] = {}
+    groups[cid].setdefault("blocked_users", {})
+    groups[cid]["blocked_users"][uid] = {
+        "name": name,
+        "warnings": warnings_count,
+        "block_type": block_type,  # "kick" or "ban"
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "status": "blocked",
+    }
+    save_groups(groups)
+
+
+def group_unblock_user(chat_id, user_id):
+    """Mark a group-blocked user as unblocked, but keep the history record (never delete)."""
+    groups = load_groups()
+    cid = str(chat_id)
+    uid = str(user_id)
+    if cid in groups and uid in groups[cid].get("blocked_users", {}):
+        groups[cid]["blocked_users"][uid]["status"] = "unblocked"
+        save_groups(groups)
+        reset_group_warnings(chat_id, user_id)
+        return True
+    return False
+
+
+def reject_group(chat_id):
+    """Mark a group as rejected (history preserved, can be reactivated later)."""
+    set_group_status(chat_id, "rejected")
+
+
+def reactivate_group(chat_id):
+    """Bring a rejected group back to pending, awaiting approval again."""
+    set_group_status(chat_id, "pending")
 
 
 def is_admin(user_id):
@@ -671,54 +763,91 @@ def render_users_list(chat_id, message_id, banner=None):
     _edit_or_send(chat_id, message_id, text, markup)
 
 
+# ---------------------------------------------------------------------------
+# Group Management panel (tree: root -> pending/approved/rejected/all -> group detail -> blocked list)
+# ---------------------------------------------------------------------------
+
+GROUP_REQUESTS_FILE = DATA_DIR / "group_requests.json"
+
+
+def _pending_requests():
+    return load_json(GROUP_REQUESTS_FILE, [])
+
+
+def _save_pending_requests(pending):
+    save_json(GROUP_REQUESTS_FILE, pending)
+
+
+def _pop_pending_request(chat_id):
+    pending = _pending_requests()
+    req = next((r for r in pending if r.get("chat_id") == str(chat_id)), None)
+    if req:
+        pending = [r for r in pending if r.get("chat_id") != str(chat_id)]
+        _save_pending_requests(pending)
+    return req
+
+
 @bot.callback_query_handler(func=lambda call: call.data == "panel_groups")
 def cb_panel_groups(call):
     if not _require_admin(call):
         return
-    pending = load_json(DATA_DIR / "group_requests.json", [])
+    bot.clear_step_handler_by_chat_id(call.message.chat.id)
+    pending = _pending_requests()
     groups = load_groups()
-    text = "👥 Group Management\n──────────────\n"
-    if pending:
-        text += "\n📥 Pending Requests:\n"
-        for i, req in enumerate(pending, 1):
-            text += f"{i}. {req.get('title','?')} [{req.get('chat_id','')}]\n"
-    text += "\n✅ Approved Groups:\n"
-    if groups:
-        for cid, info in groups.items():
-            title = info.get("title", cid)
-            status = info.get("status", "?")
-            policy = info.get("policy", "kick")
-            text += f"• {title} [{cid}]\n  Status: {status}, Policy: {policy}\n"
-    else:
-        text += "None\n"
-    markup = types.InlineKeyboardMarkup()
-    if pending:
-        for i, req in enumerate(pending, 1):
-            cid = req.get("chat_id", "")
-            markup.add(
-                types.InlineKeyboardButton(f"✅ Approve #{i}", callback_data=f"group_approve:{cid}"),
-                types.InlineKeyboardButton(f"❌ Reject #{i}", callback_data=f"group_reject:{cid}"),
-            )
+    approved = {cid: g for cid, g in groups.items() if g.get("status") == "approved"}
+    rejected = {cid: g for cid, g in groups.items() if g.get("status") == "rejected"}
+
+    text = (
+        "🎛️ Group Management\n──────────────\n"
+        f"📥 Pending: {len(pending)}\n"
+        f"✅ Approved: {len(approved)}\n"
+        f"❌ Rejected: {len(rejected)}\n"
+        f"📋 Total known: {len(groups)}\n"
+    )
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton(f"📥 Pending Requests ({len(pending)})", callback_data="grp_pending"))
+    markup.add(types.InlineKeyboardButton(f"✅ Approved Groups ({len(approved)})", callback_data="grp_approved"))
+    markup.add(types.InlineKeyboardButton(f"❌ Rejected Groups ({len(rejected)})", callback_data="grp_rejected"))
+    markup.add(types.InlineKeyboardButton("📋 All Groups", callback_data="grp_all"))
     markup.add(types.InlineKeyboardButton("🔙 Back", callback_data="panel_main"))
     _edit_or_send(call.message.chat.id, call.message.message_id, text, markup)
     bot.answer_callback_query(call.id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "grp_pending")
+def cb_grp_pending(call):
+    if not _require_admin(call):
+        return
+    pending = _pending_requests()
+    text = "📥 Pending Requests\n──────────────\n"
+    text += "\n".join(f"{i}. {r.get('title','?')} [{r.get('chat_id','')}]" for i, r in enumerate(pending, 1)) or "خالیه."
+    markup = types.InlineKeyboardMarkup()
+    for r in pending:
+        cid = r.get("chat_id", "")
+        title = (r.get("title") or cid)[:20]
+        markup.add(
+            types.InlineKeyboardButton(f"✅ Approve: {title}", callback_data=f"group_approve:{cid}"),
+            types.InlineKeyboardButton(f"❌ Reject: {title}", callback_data=f"group_reject:{cid}"),
+        )
+    markup.add(types.InlineKeyboardButton("🔙 Back", callback_data="panel_groups"))
+    _edit_or_send(call.message.chat.id, call.message.message_id, text, markup)
+    bot.answer_callback_query(call.id)
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("group_approve:"))
 def cb_group_approve(call):
     if not _require_admin(call):
         return
     chat_id = call.data.split(":", 1)[1]
-    pending = load_json(DATA_DIR / "group_requests.json", [])
-    req = next((r for r in pending if r.get("chat_id") == chat_id), None)
-    if req:
-        pending = [r for r in pending if r.get("chat_id") != chat_id]
-        save_json(DATA_DIR / "group_requests.json", pending)
-        set_group_status(chat_id, "approved", title=req.get("title"))
-        try:
-            bot.send_message(int(chat_id), "✅ This group has been approved by the admin.")
-        except Exception as e:
-            logger.error(f"Failed to notify group {chat_id}: {e}")
-    cb_panel_groups(call)
+    req = _pop_pending_request(chat_id)
+    title = req.get("title") if req else None
+    set_group_status(chat_id, "approved", title=title)
+    try:
+        bot.send_message(int(chat_id), "✅ This group has been approved by the admin.")
+    except Exception as e:
+        logger.error(f"Failed to notify approved group {chat_id}: {e}")
+    cb_grp_pending(call)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("group_reject:"))
@@ -726,17 +855,198 @@ def cb_group_reject(call):
     if not _require_admin(call):
         return
     chat_id = call.data.split(":", 1)[1]
-    pending = load_json(DATA_DIR / "group_requests.json", [])
-    req = next((r for r in pending if r.get("chat_id") == chat_id), None)
-    if req:
-        pending = [r for r in pending if r.get("chat_id") != chat_id]
-        save_json(DATA_DIR / "group_requests.json", pending)
-        try:
-            bot.send_message(int(chat_id), "❌ Bot access to this group was rejected by the admin.")
-            bot.leave_chat(int(chat_id))
-        except Exception as e:
-            logger.error(f"Failed to leave rejected group {chat_id}: {e}")
-    cb_panel_groups(call)
+    req = _pop_pending_request(chat_id)
+    title = req.get("title") if req else None
+    set_group_status(chat_id, "rejected", title=title)
+    try:
+        bot.send_message(int(chat_id), "❌ Bot access to this group was rejected by the admin.")
+        bot.leave_chat(int(chat_id))
+    except Exception as e:
+        logger.error(f"Failed to leave rejected group {chat_id}: {e}")
+    cb_grp_pending(call)
+
+
+def _render_group_list(call, groups_subset, header, empty_text):
+    text = f"{header}\n──────────────\n"
+    if not groups_subset:
+        text += empty_text
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for cid, info in groups_subset.items():
+        title = info.get("title", cid)
+        status = info.get("status", "?")
+        text += f"• {title} [{cid}] — {status}\n"
+        markup.add(types.InlineKeyboardButton(f"🔎 {title}", callback_data=f"grp_view:{cid}"))
+    markup.add(types.InlineKeyboardButton("🔙 Back", callback_data="panel_groups"))
+    _edit_or_send(call.message.chat.id, call.message.message_id, text, markup)
+    bot.answer_callback_query(call.id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "grp_approved")
+def cb_grp_approved(call):
+    if not _require_admin(call):
+        return
+    groups = load_groups()
+    subset = {cid: g for cid, g in groups.items() if g.get("status") == "approved"}
+    _render_group_list(call, subset, "✅ Approved Groups", "No approved groups.")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "grp_rejected")
+def cb_grp_rejected(call):
+    if not _require_admin(call):
+        return
+    groups = load_groups()
+    subset = {cid: g for cid, g in groups.items() if g.get("status") == "rejected"}
+    text = "❌ Rejected Groups\n──────────────\n"
+    if not subset:
+        text += "No rejected groups."
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for cid, info in subset.items():
+        title = info.get("title", cid)
+        text += f"• {title} [{cid}]\n"
+        markup.add(types.InlineKeyboardButton(f"🔄 Reactivate: {title}", callback_data=f"grp_reactivate:{cid}"))
+    markup.add(types.InlineKeyboardButton("🔙 Back", callback_data="panel_groups"))
+    _edit_or_send(call.message.chat.id, call.message.message_id, text, markup)
+    bot.answer_callback_query(call.id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "grp_all")
+def cb_grp_all(call):
+    if not _require_admin(call):
+        return
+    groups = load_groups()
+    _render_group_list(call, groups, "📋 All Groups", "No groups registered yet.")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("grp_reactivate:"))
+def cb_grp_reactivate(call):
+    if not _require_admin(call):
+        return
+    chat_id = call.data.split(":", 1)[1]
+    reactivate_group(chat_id)
+    try:
+        bot.send_message(int(chat_id), "🔄 درخواست فعال‌سازی این گروه دوباره برای ادمین ارسال شد.")
+    except Exception:
+        pass
+    cb_grp_rejected(call)
+
+
+def _group_detail_text_and_markup(chat_id):
+    groups = load_groups()
+    g = groups.get(str(chat_id), {})
+    title = g.get("title", chat_id)
+    policy = g.get("policy", "kick")
+    blocked = g.get("blocked_users", {})
+    active_blocked = sum(1 for b in blocked.values() if b.get("status") == "blocked")
+    text = (
+        f"🏷️ {title}\n──────────────\n"
+        f"chat_id: {chat_id}\n"
+        f"Status: {g.get('status','?')}\n"
+        f"Policy: {policy}\n"
+        f"Blocked users: {active_blocked}\n"
+    )
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton(f"{'✅ ' if policy=='kick' else ''}🦵 Set Policy: Kick", callback_data=f"grp_policy:{chat_id}:kick"),
+        types.InlineKeyboardButton(f"{'✅ ' if policy=='ban' else ''}⛔ Set Policy: Ban", callback_data=f"grp_policy:{chat_id}:ban"),
+    )
+    markup.add(types.InlineKeyboardButton("🔒 View Blocked Users", callback_data=f"grp_blocked:{chat_id}"))
+    markup.add(types.InlineKeyboardButton("➕ Block a User", callback_data=f"grp_block_new:{chat_id}"))
+    markup.add(types.InlineKeyboardButton("🗑️ Remove Group (reject)", callback_data=f"group_reject:{chat_id}"))
+    markup.add(types.InlineKeyboardButton("🔙 Back", callback_data="panel_groups"))
+    return text, markup
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("grp_view:"))
+def cb_grp_view(call):
+    if not _require_admin(call):
+        return
+    chat_id = call.data.split(":", 1)[1]
+    text, markup = _group_detail_text_and_markup(chat_id)
+    _edit_or_send(call.message.chat.id, call.message.message_id, text, markup)
+    bot.answer_callback_query(call.id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("grp_policy:"))
+def cb_grp_policy(call):
+    if not _require_admin(call):
+        return
+    _, chat_id, policy = call.data.split(":", 2)
+    set_group_policy(chat_id, policy)
+    bot.answer_callback_query(call.id, f"✅ Policy set to {policy}")
+    text, markup = _group_detail_text_and_markup(chat_id)
+    _edit_or_send(call.message.chat.id, call.message.message_id, text, markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("grp_blocked:"))
+def cb_grp_blocked(call):
+    if not _require_admin(call):
+        return
+    chat_id = call.data.split(":", 1)[1]
+    groups = load_groups()
+    g = groups.get(str(chat_id), {})
+    blocked = g.get("blocked_users", {})
+    title = g.get("title", chat_id)
+    text = f"🔒 Blocked Users — {title}\n──────────────\n"
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    if not blocked:
+        text += "No blocked users."
+    for uid, info in blocked.items():
+        status = info.get("status", "blocked")
+        mark = "⛔" if status == "blocked" else "✅"
+        text += (
+            f"{mark} {info.get('name','?')} [{uid}]\n"
+            f"   warnings: {info.get('warnings',0)}, type: {info.get('block_type','kick')}, status: {status}\n"
+        )
+        if status == "blocked":
+            markup.add(types.InlineKeyboardButton(f"✅ Unblock {info.get('name','?')}", callback_data=f"grp_unblock:{chat_id}:{uid}"))
+    markup.add(types.InlineKeyboardButton("🔙 Back", callback_data=f"grp_view:{chat_id}"))
+    _edit_or_send(call.message.chat.id, call.message.message_id, text, markup)
+    bot.answer_callback_query(call.id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("grp_unblock:"))
+def cb_grp_unblock(call):
+    if not _require_admin(call):
+        return
+    _, chat_id, uid = call.data.split(":", 2)
+    group_unblock_user(chat_id, uid)
+    bot.answer_callback_query(call.id, "✅ Unblocked")
+    cb_grp_blocked(call)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("grp_block_new:"))
+def cb_grp_block_new(call):
+    if not _require_admin(call):
+        return
+    chat_id = call.data.split(":", 1)[1]
+    bot.clear_step_handler_by_chat_id(call.message.chat.id)
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔙 Back", callback_data=f"grp_view:{chat_id}"))
+    msg = bot.send_message(call.message.chat.id, "🆔 آیدی عددی کاربری که می‌خوای توی این گروه بلاک کنی رو بفرست:", reply_markup=markup)
+    bot.register_next_step_handler(msg, _process_manual_group_block, chat_id)
+    bot.answer_callback_query(call.id)
+
+
+def _process_manual_group_block(message, chat_id):
+    if not is_admin(message.from_user.id):
+        return
+    text = (message.text or "").strip()
+    if not text.isdigit():
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔙 Back", callback_data=f"grp_view:{chat_id}"))
+        bot.reply_to(message, "⚠️ آیدی نامعتبره، فقط عدد بفرست.", reply_markup=markup)
+        return
+    uid = text
+    users = get_users()
+    name = users.get(uid, {}).get("name", "Unknown")
+    group_block_user(chat_id, uid, name, block_type="kick", warnings_count=0)
+    try:
+        bot.kick_chat_member(int(chat_id), int(uid))
+    except Exception as e:
+        logger.error(f"Manual kick failed for {uid} in {chat_id}: {e}")
+    text, markup = _group_detail_text_and_markup(chat_id)
+    bot.send_message(message.chat.id, "✅ کاربر به لیست بلاک‌شده‌های این گروه اضافه شد.")
+    _edit_or_send(message.chat.id, None, text, markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "panel_main")
 def cb_panel_main(call):
@@ -1032,15 +1342,24 @@ def cb_panel_msg_cancel(call):
 def render_blocked_list(chat_id, message_id, banner=None):
     blocked = get_blocked()
     users = get_users()
+    meta = get_blocked_meta()
     text = "⛔ Blocked Users\n──────────────\n\n"
     if not blocked:
         text += "No blocked users."
     else:
+        reason_labels = {
+            "bot_insult": "توهین به ربات",
+            "group_ban_policy": "policy=Ban یه گروه",
+            "manual": "بلاک دستی ادمین",
+        }
         for i, user_id in enumerate(blocked, 1):
             info = users.get(user_id, {})
             name = info.get("name", "Unknown")
             username = info.get("username", "No username")
-            text += f"{i}. {name} [{user_id}] {username}\n"
+            m = meta.get(user_id, {})
+            reason = reason_labels.get(m.get("reason"), "نامشخص")
+            source = m.get("source", "-")
+            text += f"{i}. {name} [{user_id}] {username}\n   دلیل: {reason} | منبع: {source}\n"
     if banner:
         text = banner + "\n\n" + text
 
@@ -1184,12 +1503,12 @@ def approve_group(message):
         bot.reply_to(message, "Usage: /approve_group CHAT_ID")
 
 @bot.message_handler(commands=['reject_group'])
-def reject_group(message):
+def cmd_reject_group(message):
     if not is_admin(message.from_user.id):
         return
     try:
         chat_id = message.text.split()[1]
-        set_group_status(chat_id, "rejected")
+        reject_group(chat_id)
         bot.reply_to(message, f"❌ Group {chat_id} rejected")
     except Exception:
         bot.reply_to(message, "Usage: /reject_group CHAT_ID")
@@ -1353,31 +1672,7 @@ def handle_group(message):
         if g.get("status") != "approved":
             return
 
-        if not is_admin(message.from_user.id):
-            if message.text and check_badwords(message.text):
-                w = warn_user(message.from_user.id)
-                name = message.from_user.first_name or "User"
-                if w == 1:
-                    bot.reply_to(message, "⚠️ Warning 1: watch your language.")
-                    bot.send_message(ADMIN_ID, f"🚨 Group Warning 1\nUser: {name}\nID: {message.from_user.id}\nChat: {chat_id}\nText: {message.text}")
-                    return
-                elif w == 2:
-                    bot.reply_to(message, "⚠️ Warning 2: one more and you'll be banned.")
-                    bot.send_message(ADMIN_ID, f"🚨 Group Warning 2\nUser: {name}\nID: {message.from_user.id}\nChat: {chat_id}\nText: {message.text}")
-                    return
-                else:
-                    policy = g.get("policy", "kick")
-                    if policy == "ban":
-                        block_user(message.from_user.id)
-                        bot.send_message(ADMIN_ID, f"⛔ Global Banned\nUser: {name}\nID: {message.from_user.id}")
-                    else:
-                        try:
-                            bot.kick_chat_member(message.chat.id, message.from_user.id)
-                            bot.send_message(ADMIN_ID, f"⛔ Kicked from group\nUser: {name}\nID: {message.from_user.id}")
-                        except Exception as e:
-                            bot.send_message(ADMIN_ID, f"⚠️ Can't kick {name}: {e}")
-                    return
-
+        # Detect whether this message is addressed to the bot (mention or reply to bot's message)
         mentioned = False
         try:
             bot_username = bot.get_me().username
@@ -1387,8 +1682,54 @@ def handle_group(message):
                 low = message.text.lower()
                 if f"@{bot_username}" in low or "voidra" in low or "voidrra" in low:
                     mentioned = True
-        except:
+        except Exception:
             pass
+
+        if not is_admin(message.from_user.id):
+            if message.text and check_badwords(message.text):
+                name = message.from_user.first_name or "User"
+
+                if mentioned:
+                    # Path 2: insult aimed directly at the bot -> global counter, always ends in a global ban
+                    w = warn_user_global(message.from_user.id)
+                    if w == 1:
+                        bot.reply_to(message, "⚠️ اخطار اول: به ربات توهین نکن.")
+                        bot.send_message(ADMIN_ID, f"🚨 اخطار اول (توهین به ربات)\nکاربر: {name}\nID: {message.from_user.id}\nChat: {chat_id}\nText: {message.text}")
+                        return
+                    elif w == 2:
+                        bot.reply_to(message, "⚠️ اخطار دوم: یک بار دیگه برای همیشه بلاک می‌شی.")
+                        bot.send_message(ADMIN_ID, f"🚨 اخطار دوم (توهین به ربات)\nکاربر: {name}\nID: {message.from_user.id}\nChat: {chat_id}\nText: {message.text}")
+                        return
+                    else:
+                        block_user(message.from_user.id, reason="bot_insult", source="bot_direct")
+                        bot.reply_to(message, "⛔ به دلیل توهین به ربات، به‌طور کامل بلاک شدی.")
+                        bot.send_message(ADMIN_ID, f"⛔ Global Banned (توهین به ربات)\nUser: {name}\nID: {message.from_user.id}\nChat: {chat_id}")
+                        return
+                else:
+                    # Path 1: ordinary profanity in the group -> per-group counter, resolved by group policy
+                    w = warn_user_in_group(chat_id, message.from_user.id)
+                    if w == 1:
+                        bot.reply_to(message, "⚠️ اخطار اول: استفاده از فحش توی این گروه ممنوعه.")
+                        bot.send_message(ADMIN_ID, f"🚨 اخطار اول (گروه)\nUser: {name}\nID: {message.from_user.id}\nChat: {chat_id}\nText: {message.text}")
+                        return
+                    elif w == 2:
+                        bot.reply_to(message, "⚠️ اخطار دوم: یک بار دیگه طبق سیاست این گروه بلاک می‌شی.")
+                        bot.send_message(ADMIN_ID, f"🚨 اخطار دوم (گروه)\nUser: {name}\nID: {message.from_user.id}\nChat: {chat_id}\nText: {message.text}")
+                        return
+                    else:
+                        policy = g.get("policy", "kick")
+                        if policy == "ban":
+                            block_user(message.from_user.id, reason="group_ban_policy", source=chat_id)
+                            group_block_user(chat_id, message.from_user.id, name, block_type="ban", warnings_count=w)
+                            bot.send_message(ADMIN_ID, f"⛔ Global Banned (policy=ban)\nUser: {name}\nID: {message.from_user.id}\nChat: {chat_id}")
+                        else:
+                            group_block_user(chat_id, message.from_user.id, name, block_type="kick", warnings_count=w)
+                            try:
+                                bot.kick_chat_member(message.chat.id, message.from_user.id)
+                                bot.send_message(ADMIN_ID, f"⛔ Kicked from group\nUser: {name}\nID: {message.from_user.id}\nChat: {chat_id}")
+                            except Exception as e:
+                                bot.send_message(ADMIN_ID, f"⚠️ Can't kick {name}: {e}")
+                        return
 
         if not mentioned:
             return
@@ -1569,13 +1910,14 @@ def handle_new_chat_members(message):
                     message.chat.id,
                     "This bot needs admin approval to work in this group."
                 )
-                pending = load_json(DATA_DIR / "group_requests.json", [])
+                pending = _pending_requests()
                 if not any(r.get("chat_id") == chat_id for r in pending):
                     pending.append({"chat_id": chat_id, "title": message.chat.title})
-                    save_json(DATA_DIR / "group_requests.json", pending)
+                    _save_pending_requests(pending)
                 bot.send_message(ADMIN_ID, f"📥 New group request from {message.chat.title}")
     except Exception as e:
         logger.error(f"new_chat_members error: {e}")
+
 
 
 @bot.message_handler(content_types=['photo'])
@@ -1743,25 +2085,26 @@ def chat_with_ai(message):
 
         if not is_admin(message.from_user.id):
             if check_badwords(message.text):
-                w = warn_user(message.from_user.id)
+                # Private chat with the bot = always Path 2 (insult aimed at the bot itself), global + persistent counter
+                w = warn_user_global(message.from_user.id)
                 name = message.from_user.first_name or "کاربر"
                 if w == 1:
-                    bot.reply_to(message, "⚠️ اخطار اول: استفاده از فحش ممنوعه.")
+                    bot.reply_to(message, "⚠️ اخطار اول: به ربات توهین نکن.")
                     try:
-                        bot.send_message(ADMIN_ID, f"🚨 اخطار اول\nکاربر: {name}\nID: {message.from_user.id}\nمتن: {message.text}")
+                        bot.send_message(ADMIN_ID, f"🚨 اخطار اول (پی‌وی)\nکاربر: {name}\nID: {message.from_user.id}\nمتن: {message.text}")
                     except: pass
                     return
                 elif w == 2:
-                    bot.reply_to(message, "⚠️ اخطار دوم: یک بار دیگه بلاک می‌شی.")
+                    bot.reply_to(message, "⚠️ اخطار دوم: یک بار دیگه برای همیشه بلاک می‌شی.")
                     try:
-                        bot.send_message(ADMIN_ID, f"🚨 اخطار دوم\nکاربر: {name}\nID: {message.from_user.id}\nمتن: {message.text}")
+                        bot.send_message(ADMIN_ID, f"🚨 اخطار دوم (پی‌وی)\nکاربر: {name}\nID: {message.from_user.id}\nمتن: {message.text}")
                     except: pass
                     return
                 else:
-                    block_user(message.from_user.id)
-                    bot.reply_to(message, "⛔ تو به دلیل فحش بلاک شدی.")
+                    block_user(message.from_user.id, reason="bot_insult", source="bot_direct")
+                    bot.reply_to(message, "⛔ به دلیل توهین به ربات، به‌طور کامل بلاک شدی.")
                     try:
-                        bot.send_message(ADMIN_ID, f"⛔ کاربر بلاک شد\nکاربر: {name}\nID: {message.from_user.id}\nمتن: {message.text}")
+                        bot.send_message(ADMIN_ID, f"⛔ کاربر بلاک شد (توهین به ربات)\nکاربر: {name}\nID: {message.from_user.id}\nمتن: {message.text}")
                     except: pass
                     return
 
