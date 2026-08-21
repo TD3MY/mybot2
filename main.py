@@ -1497,6 +1497,27 @@ def handle_document(message):
         register_user(message.from_user)
         notify_admin_once(message.from_user)
 
+        if message.chat.type in ["group", "supergroup"]:
+            chat_id = str(message.chat.id)
+            g = get_group_status(chat_id)
+            if g.get("status") != "approved":
+                return
+
+            mentioned = False
+            try:
+                bot_username = bot.get_me().username
+                if message.reply_to_message and message.reply_to_message.from_user.id == bot.get_me().id:
+                    mentioned = True
+                elif message.caption:
+                    low = message.caption.lower()
+                    if f"@{bot_username}" in low or "voidra" in low or "voidrra" in low:
+                        mentioned = True
+            except Exception:
+                pass
+
+            if not mentioned:
+                return
+
         if is_user_blocked(message.from_user.id):
             bot.reply_to(message, "⛔ You are blocked by admin")
             return
