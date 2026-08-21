@@ -392,9 +392,18 @@ def check_badwords(user_text):
                 "Content-Type": "application/json",
             },
             json={
-                "model": "openrouter/auto",
+                "model": "openai/gpt-4o-mini",
                 "messages": [
-                    {"role": "user", "content": BADWORD_CHECK_PROMPT + user_text}
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a strict content moderation classifier. "
+                            "You must reply with EXACTLY one word: YES or NO. "
+                            "No punctuation, no explanation, no other language, "
+                            "nothing else in the response."
+                        ),
+                    },
+                    {"role": "user", "content": BADWORD_CHECK_PROMPT + user_text},
                 ],
                 "max_tokens": 5,
                 "temperature": 0,
@@ -402,8 +411,17 @@ def check_badwords(user_text):
             timeout=20,
         )
         data = r.json()
+
+        if "choices" not in data:
+            logger.error(f"badword check: unexpected API response: {data}")
+            return False
+
         content = data["choices"][0]["message"]["content"].strip().upper()
-        return "YES" in content
+        logger.info(f"badword check raw result: {content!r} for text: {user_text[:80]!r}")
+
+        if "YES" in content or "بله" in content:
+            return True
+        return False
     except Exception as e:
         logger.error(f"badword check failed: {e}")
         return False
