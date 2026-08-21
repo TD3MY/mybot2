@@ -326,6 +326,44 @@ SYSTEM_PROMPT = {
 # AI communication functions
 # ---------------------------------------------------------------------------
 
+
+BADWORD_CHECK_PROMPT = (
+    "Check if the following user message contains very rude, vulgar, or "
+    "highly offensive profanity (especially sexual or extremely insulting words). "
+    "Reply with exactly YES or NO.\n\nUser message: "
+)
+
+warnings = {}
+
+def warn_user(user_id):
+    warnings[user_id] = warnings.get(user_id, 0) + 1
+    return warnings[user_id]
+
+def check_badwords(user_text):
+    try:
+        r = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "openrouter/auto",
+                "messages": [
+                    {"role": "user", "content": BADWORD_CHECK_PROMPT + user_text}
+                ],
+                "max_tokens": 5,
+                "temperature": 0,
+            },
+            timeout=20,
+        )
+        data = r.json()
+        content = data["choices"][0]["message"]["content"].strip().upper()
+        return "YES" in content
+    except Exception as e:
+        logger.error(f"badword check failed: {e}")
+        return False
+
 def ask_ai(chat_id, prompt):
     """Send user's text message to OpenRouter and get AI response."""
     history = conversations.setdefault(chat_id, [])
@@ -436,7 +474,8 @@ def ask_ai_image(chat_id, caption, image_base64):
 # Admin notification
 # ---------------------------------------------------------------------------
 ADMIN_CHAT_ID = "-1003814189696"
-notified_users = set()
+NOTIFIED_FILE = DATA_DIR / "notified_users.json"
+notified_users = set(load_json(NOTIFIED_FILE, []))
 
 
 def notify_admin_once(user):
@@ -444,6 +483,7 @@ def notify_admin_once(user):
     if user.id in notified_users:
         return
     notified_users.add(user.id)
+    save_json(NOTIFIED_FILE, list(notified_users))
 
     name_parts = [user.first_name or "", user.last_name or ""]
     full_name = " ".join(p for p in name_parts if p).strip() or "Unknown name"
@@ -1419,6 +1459,30 @@ def chat_with_ai(message):
             return
 
         bot.send_chat_action(message.chat.id, 'typing')
+
+        if not is_admin(message.from_user.id):
+            if check_badwords(message.text):
+                w = warn_user(message.from_user.id)
+                name = message.from_user.first_name or "کاربر"
+                if w == 1:
+                    bot.reply_to(message, "⚠️ اخطار اول: استفاده از فحش ممنوعه.")
+                    try:
+                        bot.send_message(ADMIN_ID, f"🚨 اخطار اول\nکاربر: {name}\nID: {message.from_user.id}\nمتن: {message.text}")
+                    except: pass
+                    return
+                elif w == 2:
+                    bot.reply_to(message, "⚠️ اخطار دوم: یک بار دیگه بلاک می‌شی.")
+                    try:
+                        bot.send_message(ADMIN_ID, f"🚨 اخطار دوم\nکاربر: {name}\nID: {message.from_user.id}\nمتن: {message.text}")
+                    except: pass
+                    return
+                else:
+                    block_user(message.from_user.id)
+                    bot.reply_to(message, "⛔ تو به دلیل فحش بلاک شدی.")
+                    try:
+                        bot.send_message(ADMIN_ID, f"⛔ کاربر بلاک شد\nکاربر: {name}\nID: {message.from_user.id}\nمتن: {message.text}")
+                    except: pass
+                    return
 
         append_user_message(message.from_user.id, "user", message.text)
 
