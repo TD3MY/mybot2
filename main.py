@@ -415,7 +415,7 @@ def ask_ai(chat_id, prompt):
 
 def ask_ai_image(chat_id, caption, image_base64):
     """Send user's image to OpenRouter vision model and get AI response."""
-    user_text = caption if caption else "Describe this image."
+    user_text = caption if caption else "بگو توی این عکس چی می‌بینی؟ طبیعی و خلاصه توضیح بده."
 
     user_message = {
         "role": "user",
@@ -525,6 +525,32 @@ def send_join_prompt(message):
         f"Tap the button below to join, then tap \"I've joined\" 🧠",
         reply_markup=markup,
     )
+
+
+
+GROUP_FILE = DATA_DIR / "groups.json"
+
+def load_groups():
+    return load_json(GROUP_FILE, {})
+
+def save_groups(groups):
+    save_json(GROUP_FILE, groups)
+
+def get_group_status(chat_id):
+    groups = load_groups()
+    return groups.get(str(chat_id), {})
+
+def set_group_status(chat_id, status):
+    groups = load_groups()
+    groups[str(chat_id)] = {"status": status}
+    save_groups(groups)
+
+def set_group_policy(chat_id, policy):
+    groups = load_groups()
+    if str(chat_id) not in groups:
+        groups[str(chat_id)] = {}
+    groups[str(chat_id)]["policy"] = policy
+    save_groups(groups)
 
 
 def is_admin(user_id):
@@ -1074,6 +1100,43 @@ def cb_panel_broadcast_send(call):
     bot.answer_callback_query(call.id)
 
 
+@bot.message_handler(commands=['approve_group'])
+def approve_group(message):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        chat_id = message.text.split()[1]
+        set_group_status(chat_id, "approved")
+        bot.reply_to(message, f"✅ Group {chat_id} approved")
+    except Exception:
+        bot.reply_to(message, "Usage: /approve_group CHAT_ID")
+
+@bot.message_handler(commands=['reject_group'])
+def reject_group(message):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        chat_id = message.text.split()[1]
+        set_group_status(chat_id, "rejected")
+        bot.reply_to(message, f"❌ Group {chat_id} rejected")
+    except Exception:
+        bot.reply_to(message, "Usage: /reject_group CHAT_ID")
+
+@bot.message_handler(commands=['group_policy'])
+def group_policy(message):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        parts = message.text.split()
+        chat_id = parts[1]
+        policy = parts[2]
+        if policy not in ["kick", "ban"]:
+            raise ValueError
+        set_group_policy(chat_id, policy)
+        bot.reply_to(message, f"✅ Policy for {chat_id} set to {policy}")
+    except Exception:
+        bot.reply_to(message, "Usage: /group_policy CHAT_ID kick|ban")
+
 @bot.callback_query_handler(func=lambda call: call.data == "panel_broadcast_cancel")
 def cb_panel_broadcast_cancel(call):
     if not _require_admin(call):
@@ -1209,6 +1272,64 @@ def cb_panel_log_reset(call):
 # Regular command handlers
 # ---------------------------------------------------------------------------
 
+
+@bot.message_handler(func=lambda m: m.chat.type in ["group", "supergroup"])
+def handle_group(message):
+    try:
+        chat_id = str(message.chat.id)
+        g = get_group_status(chat_id)
+        if g.get("status") != "approved":
+            return
+
+        if not is_admin(message.from_user.id):
+            if message.text and check_badwords(message.text):
+                w = warn_user(message.from_user.id)
+                name = message.from_user.first_name or "User"
+                if w == 1:
+                    bot.reply_to(message, "⚠️ Warning 1: watch your language.")
+                    bot.send_message(ADMIN_ID, f"🚨 Group Warning 1\nUser: {name}\nID: {message.from_user.id}\nChat: {chat_id}\nText: {message.text}")
+                    return
+                elif w == 2:
+                    bot.reply_to(message, "⚠️ Warning 2: one more and you'll be banned.")
+                    bot.send_message(ADMIN_ID, f"🚨 Group Warning 2\nUser: {name}\nID: {message.from_user.id}\nChat: {chat_id}\nText: {message.text}")
+                    return
+                else:
+                    policy = g.get("policy", "kick")
+                    if policy == "ban":
+                        block_user(message.from_user.id)
+                        bot.send_message(ADMIN_ID, f"⛔ Global Banned\nUser: {name}\nID: {message.from_user.id}")
+                    else:
+                        try:
+                            bot.kick_chat_member(message.chat.id, message.from_user.id)
+                            bot.send_message(ADMIN_ID, f"⛔ Kicked from group\nUser: {name}\nID: {message.from_user.id}")
+                        except Exception as e:
+                            bot.send_message(ADMIN_ID, f"⚠️ Can't kick {name}: {e}")
+                    return
+
+        mentioned = False
+        try:
+            bot_username = bot.get_me().username
+            if message.reply_to_message and message.reply_to_message.from_user.id == bot.get_me().id:
+                mentioned = True
+            elif message.text:
+                low = message.text.lower()
+                if f"@{bot_username}" in low or "voidra" in low or "voidrra" in low:
+                    mentioned = True
+        except:
+            pass
+
+        if not mentioned:
+            return
+
+        register_user(message.from_user)
+        prompt = message.text or ""
+        bot.send_chat_action(message.chat.id, 'typing')
+        reply = ask_ai(message.chat.id, prompt)
+        bot.reply_to(message, reply)
+    except Exception as e:
+        logger.error(f"group handler error: {e}")
+
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     """Handle /start command."""
@@ -1296,6 +1417,72 @@ def recheck_membership(call):
 # ---------------------------------------------------------------------------
 # Photo handler
 # ---------------------------------------------------------------------------
+
+
+@bot.message_handler(content_types=['document'])
+def handle_document(message):
+    try:
+        register_user(message.from_user)
+        notify_admin_once(message.from_user)
+
+        if is_user_blocked(message.from_user.id):
+            bot.reply_to(message, "⛔ You are blocked by admin")
+            return
+
+        if not is_channel_member(bot, message.from_user.id):
+            send_join_prompt(message)
+            return
+
+        file_info = bot.get_file(message.document.file_id)
+        file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
+        fname = message.document.file_name or ""
+        bot.send_chat_action(message.chat.id, 'typing')
+
+        if fname.lower().endswith(".pdf"):
+            from pypdf import PdfReader
+            r = requests.get(file_url, timeout=60)
+            pdf_data = r.content
+            with open("temp.pdf", "wb") as f:
+                f.write(pdf_data)
+            reader = PdfReader("temp.pdf")
+            txt = ""
+            for page in reader.pages:
+                txt += page.extract_text() or ""
+            prompt = f"این متن از فایل PDF است:\n{txt[:4000]}\n\nآن را خلاصه و تحلیل کن."
+        elif fname.lower().endswith(".txt"):
+            r = requests.get(file_url, timeout=60)
+            txt = r.text[:4000]
+            prompt = f"این متن از فایل متنی است:\n{txt}\n\nآن را تحلیل کن."
+        else:
+            bot.reply_to(message, "⚠️ فقط PDF و TXT پشتیبانی می‌شود.")
+            return
+
+        reply = ask_ai(message.chat.id, prompt)
+        bot.reply_to(message, reply)
+    except Exception as e:
+        logger.error(f"document handler error: {e}")
+        bot.reply_to(message, "⚠️ خطا در پردازش فایل")
+
+
+
+@bot.message_handler(content_types=['new_chat_members'])
+def handle_new_chat_members(message):
+    try:
+        for member in message.new_chat_members:
+            if member.id == bot.get_me().id:
+                chat_id = str(message.chat.id)
+                set_group_status(chat_id, "pending")
+                bot.send_message(
+                    message.chat.id,
+                    "This bot needs admin approval to work in this group."
+                )
+                bot.send_message(
+                    ADMIN_ID,
+                    f"📥 Bot added to group\nChat: {chat_id}\nTitle: {message.chat.title}\n\n/approve_group_{chat_id} or /reject_group_{chat_id}"
+                )
+    except Exception as e:
+        logger.error(f"new_chat_members error: {e}")
+
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
@@ -1484,7 +1671,14 @@ def chat_with_ai(message):
                     except: pass
                     return
 
-        append_user_message(message.from_user.id, "user", message.text)
+        extra = ""
+        if message.reply_to_message:
+            if message.reply_to_message.text:
+                extra += "\nریپلای به: " + message.reply_to_message.text[:1000]
+        if message.forward_from or message.forward_from_chat:
+            extra += "\n(پیام فوروارد شده)"
+
+        append_user_message(message.from_user.id, "user", message.text + extra)
 
         reply = ask_ai(message.chat.id, message.text)
 
