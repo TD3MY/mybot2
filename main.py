@@ -609,6 +609,7 @@ def get_panel_main_keyboard():
         types.InlineKeyboardButton("⛔ Blocked", callback_data="panel_blocked"),
         types.InlineKeyboardButton("📢 Broadcast", callback_data="panel_broadcast"),
         types.InlineKeyboardButton("📊 Stats", callback_data="panel_stats"),
+        types.InlineKeyboardButton("👥 Group Management", callback_data="panel_groups"),
         types.InlineKeyboardButton("📋 Bot Log", callback_data="panel_log"),
     )
     return markup
@@ -665,6 +666,33 @@ def render_users_list(chat_id, message_id, banner=None):
     markup.add(types.InlineKeyboardButton("🔙 Back", callback_data="panel_main"))
     _edit_or_send(chat_id, message_id, text, markup)
 
+
+@bot.callback_query_handler(func=lambda call: call.data == "panel_groups")
+def cb_panel_groups(call):
+    if not _require_admin(call):
+        return
+    pending = load_json(DATA_DIR / "group_requests.json", [])
+    groups = load_groups()
+    text = "👥 Group Management\n──────────────\n"
+    if pending:
+        text += "\n📥 Pending Requests:\n"
+        for i, req in enumerate(pending, 1):
+            text += f"{i}. {req.get('title','?')} [{req.get('chat_id','')}]\n"
+    text += "\n✅ Approved Groups:\n"
+    if groups:
+        for cid, info in groups.items():
+            title = info.get("title", cid)
+            status = info.get("status", "?")
+            policy = info.get("policy", "kick")
+            text += f"• {title} [{cid}]\n  Status: {status}, Policy: {policy}\n"
+    else:
+        text += "None\n"
+    markup = types.InlineKeyboardMarkup()
+    if pending:
+        markup.add(types.InlineKeyboardButton("✅ Approve First", callback_data="group_approve_first"))
+    markup.add(types.InlineKeyboardButton("🔙 Back", callback_data="panel_main"))
+    _edit_or_send(call.message.chat.id, call.message.message_id, text, markup)
+    bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "panel_main")
 def cb_panel_main(call):
@@ -1476,10 +1504,11 @@ def handle_new_chat_members(message):
                     message.chat.id,
                     "This bot needs admin approval to work in this group."
                 )
-                bot.send_message(
-                    ADMIN_ID,
-                    f"📥 Bot added to group\nChat: {chat_id}\nTitle: {message.chat.title}\n\n/approve_group_{chat_id} or /reject_group_{chat_id}"
-                )
+                pending = load_json(DATA_DIR / "group_requests.json", [])
+                if chat_id not in pending:
+                    pending.append({"chat_id": chat_id, "title": message.chat.title})
+                    save_json(DATA_DIR / "group_requests.json", pending)
+                bot.send_message(ADMIN_ID, f"📥 New group request from {message.chat.title}")
     except Exception as e:
         logger.error(f"new_chat_members error: {e}")
 
