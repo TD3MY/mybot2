@@ -497,7 +497,7 @@ def ask_gemini(prompt, image_base64=None):
             logger.error(f"Gemini exception [{model}]: {e}")
             continue
 
-    return "⚠️ AI error: all models busy"
+    return ask_openrouter_fallback(prompt, image_base64)
 
 
 def ask_ai(chat_id, prompt):
