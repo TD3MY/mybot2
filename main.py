@@ -460,23 +460,6 @@ def generate_pollinations_image(prompt):
         return None
 
 
-@bot.message_handler(commands=['image'])
-def cmd_image(message):
-    try:
-        prompt = message.text.replace("/image", "", 1).strip()
-        if not prompt:
-            bot.reply_to(message, "Usage: /image YOUR PROMPT")
-            return
-        bot.send_chat_action(message.chat.id, 'upload_photo')
-        img = generate_pollinations_image(prompt)
-        if img:
-            bot.send_photo(message.chat.id, img, caption=f"🖼️ {prompt}")
-        else:
-            bot.reply_to(message, "⚠️ Failed to generate image")
-    except Exception as e:
-        logger.error(f"cmd_image error: {e}")
-        bot.reply_to(message, "⚠️ Error generating image")
-
 
 def ask_gemini(prompt, image_base64=None):
     user_text = prompt if prompt else "بگو توی این عکس چی می‌بینی؟"
@@ -626,6 +609,26 @@ def start_backup_scheduler():
 
 
 bot = telebot.TeleBot(TOKEN)
+
+@bot.message_handler(commands=['image'])
+def cmd_image(message):
+    try:
+        prompt = message.text.replace("/image", "", 1).strip()
+        if not prompt:
+            bot.reply_to(message, "Usage: /image YOUR PROMPT")
+            return
+        bot.send_chat_action(message.chat.id, 'upload_photo')
+        img = generate_pollinations_image(prompt)
+        if img:
+            bot.send_photo(message.chat.id, img, caption=f"🖼️ {prompt}")
+        else:
+            bot.reply_to(message, "⚠️ Failed to generate image")
+    except Exception as e:
+        logger.error(f"cmd_image error: {e}")
+        bot.reply_to(message, "⚠️ Error generating image")
+
+
+
 
 
 # ---------------------------------------------------------------------------
