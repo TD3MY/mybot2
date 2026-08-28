@@ -428,9 +428,9 @@ def check_badwords(user_text):
         return False
 
 GEMINI_MODELS = [
-    "gemini-3.6-flash",
-    "gemini-3.6-flash",
     "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
     "gemini-3.4-flash",
     "gemini-3.3-flash",
 ]
