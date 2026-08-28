@@ -453,46 +453,6 @@ def ask_gemini(prompt, image_base64=None):
             data = response.json()
 
             if "candidates" in data:
-                reply = data["candidates"][0].get("content", {}).get("parts", [{}])[0].get("text", "🤖")
-                return clean_response(reply)
-
-            err = data.get("error", {})
-            code = err.get("code")
-            if code in [503, 429]:
-                continue
-            logger.error(f"Gemini error [{model}]: {data}")
-            return f"⚠️ AI error: {data}"
-        except Exception as e:
-            logger.error(f"Gemini exception [{model}]: {e}")
-            continue
-
-    return "⚠️ AI error: all models busy"
-
-def ask_ai(chat_id, prompt):
-    """Send user's text message to Gemini API and get AI response."""
-    history = conversations.setdefault(chat_id, [])
-    history.append({"role": "user", "content": prompt})
-
-    trimmed_history = history[-MAX_HISTORY:]
-    messages_to_send = [SYSTEM_PROMPT] + trimmed_history
-
-    try:
-        system_text = SYSTEM_PROMPT.get("content", "")
-        full_prompt = system_text + "\n\nUser: " + prompt
-        contents = [{"role": "user", "parts": [{"text": full_prompt}]}]
-        response = requests.post(
-            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
-            headers={"Content-Type": "application/json"},
-            json={"contents": contents},
-            timeout=30,
-        )
-        data = response.json()
-
-        if "candidates" in data:
-            reply = data["candidates"][0].get("content", {}).get("parts", [{}])[0].get("text", "🤖")
-            reply = clean_response(reply)
-            history.append({"role": "assistant", "content": reply})
-            conversations[chat_id] = history[-MAX_HISTORY:]
             return reply
 
         logger.error(f"Gemini API error: {data}")
@@ -520,12 +480,6 @@ def ask_ai_image(chat_id, caption, image_base64):
         return f"⚠️ Error talking to AI: {e}"
 
 
-            reply = data["candidates"][0].get("content", {}).get("parts", [{}])[0].get("text", "🤖")
-            reply = clean_response(reply)
-            history = conversations.setdefault(chat_id, [])
-            history.append({"role": "user", "content": f"[Sent an image] {user_text}"})
-            history.append({"role": "assistant", "content": reply})
-            conversations[chat_id] = history[-MAX_HISTORY:]
             return reply
 
         logger.error(f"Gemini vision API error: {data}")
