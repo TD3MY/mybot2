@@ -436,9 +436,11 @@ def ask_ai(chat_id, prompt):
     messages_to_send = [SYSTEM_PROMPT] + trimmed_history
 
     try:
-        contents = [{"role": "user", "parts": [{"text": prompt}]}]
+        system_text = SYSTEM_PROMPT.get("content", "")
+        full_prompt = system_text + "\n\nUser: " + prompt
+        contents = [{"role": "user", "parts": [{"text": full_prompt}]}]
         response = requests.post(
-            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}",
+            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
             headers={"Content-Type": "application/json"},
             json={"contents": contents},
             timeout=30,
@@ -467,7 +469,7 @@ def ask_ai_image(chat_id, caption, image_base64):
     try:
         parts = [{"text": user_text}, {"inline_data": {"mime_type": "image/jpeg", "data": image_base64}}]
         response = requests.post(
-            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}",
+            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
             headers={"Content-Type": "application/json"},
             json={"contents": [{"role": "user", "parts": parts}]},
             timeout=60,
