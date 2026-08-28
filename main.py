@@ -2194,7 +2194,7 @@ def chat_with_ai(message):
             send_join_prompt(message)
             return
 
-        text_lower = message.text.lower()
+        text_lower = (message.text or "").lower()
         if "عکس بساز" in text_lower or "تصویر بساز" in text_lower or "make image" in text_lower or "generate image" in text_lower:
             prompt = message.text
             bot.send_chat_action(message.chat.id, 'upload_photo')
