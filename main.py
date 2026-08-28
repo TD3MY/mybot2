@@ -480,14 +480,12 @@ def ask_ai_image(chat_id, caption, image_base64):
         history.append({"role": "user", "content": f"[Sent an image] {user_text}"})
         history.append({"role": "assistant", "content": reply})
         conversations[chat_id] = history[-MAX_HISTORY:]
-        return reply
 
     except Exception as e:
         logger.error(f"Exception in ask_ai_image: {e}")
         return f"⚠️ Error talking to AI: {e}"
 
 
-            return reply
 
 
     except Exception as e:
