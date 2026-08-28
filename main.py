@@ -21,6 +21,7 @@ load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "5497607248"))
 
 OPENROUTER_MODEL = "openrouter/auto"
@@ -427,109 +428,67 @@ def check_badwords(user_text):
         return False
 
 def ask_ai(chat_id, prompt):
-    """Send user's text message to OpenRouter and get AI response."""
+    """Send user's text message to Gemini API and get AI response."""
     history = conversations.setdefault(chat_id, [])
     history.append({"role": "user", "content": prompt})
 
     trimmed_history = history[-MAX_HISTORY:]
     messages_to_send = [SYSTEM_PROMPT] + trimmed_history
 
-    for attempt in range(2):
-        try:
-            response = requests.post(
-                url="https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": OPENROUTER_MODEL,
-                    "messages": messages_to_send,
-                },
-                timeout=30,
-            )
-            data = response.json()
+    try:
+        contents = [{"role": "user", "parts": [{"text": prompt}]}]
+        response = requests.post(
+            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+            headers={"Content-Type": "application/json"},
+            json={"contents": contents},
+            timeout=30,
+        )
+        data = response.json()
 
-            if "choices" in data:
-                reply = data["choices"][0]["message"]["content"]
-                reply = clean_response(reply)
-                history.append({"role": "assistant", "content": reply})
-                conversations[chat_id] = history[-MAX_HISTORY:]
-                return reply
+        if "candidates" in data:
+            reply = data["candidates"][0].get("content", {}).get("parts", [{}])[0].get("text", "🤖")
+            reply = clean_response(reply)
+            history.append({"role": "assistant", "content": reply})
+            conversations[chat_id] = history[-MAX_HISTORY:]
+            return reply
 
-            error_code = data.get("error", {}).get("code")
-            if error_code == 429 and attempt == 0:
-                wait_seconds = data.get("error", {}).get("metadata", {}).get("retry_after_seconds", 5)
-                time.sleep(min(wait_seconds, 15))
-                continue
+        logger.error(f"Gemini API error: {data}")
+        return f"⚠️ AI error: {data}"
 
-            if error_code == 429:
-                logger.warning(f"Rate limit exceeded for chat {chat_id}")
-                return "🧠 I'm a bit busy right now, please try again in a few seconds 🧠"
-
-            logger.error(f"OpenRouter API error: {data}")
-            return f"⚠️ AI error: {data}"
-
-        except Exception as e:
-            logger.error(f"Exception in ask_ai: {e}")
-            return f"⚠️ Error talking to AI: {e}"
+    except Exception as e:
+        logger.error(f"Exception in ask_ai: {e}")
+        return f"⚠️ Error talking to AI: {e}"
 
 
 def ask_ai_image(chat_id, caption, image_base64):
-    """Send user's image to OpenRouter vision model and get AI response."""
+    """Send user's image to Gemini API and get AI response."""
     user_text = caption if caption else "بگو توی این عکس چی می‌بینی؟ طبیعی و خلاصه توضیح بده."
 
-    user_message = {
-        "role": "user",
-        "content": [
-            {"type": "text", "text": user_text},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}},
-        ],
-    }
+    try:
+        parts = [{"text": user_text}, {"inline_data": {"mime_type": "image/jpeg", "data": image_base64}}]
+        response = requests.post(
+            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+            headers={"Content-Type": "application/json"},
+            json={"contents": [{"role": "user", "parts": parts}]},
+            timeout=60,
+        )
+        data = response.json()
 
-    messages_to_send = [SYSTEM_PROMPT, user_message]
+        if "candidates" in data:
+            reply = data["candidates"][0].get("content", {}).get("parts", [{}])[0].get("text", "🤖")
+            reply = clean_response(reply)
+            history = conversations.setdefault(chat_id, [])
+            history.append({"role": "user", "content": f"[Sent an image] {user_text}"})
+            history.append({"role": "assistant", "content": reply})
+            conversations[chat_id] = history[-MAX_HISTORY:]
+            return reply
 
-    for attempt in range(2):
-        try:
-            response = requests.post(
-                url="https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": VISION_MODEL,
-                    "messages": messages_to_send,
-                },
-                timeout=60,
-            )
-            data = response.json()
+        logger.error(f"Gemini vision API error: {data}")
+        return f"⚠️ AI error: {data}"
 
-            if "choices" in data:
-                reply = data["choices"][0]["message"]["content"]
-                reply = clean_response(reply)
-                history = conversations.setdefault(chat_id, [])
-                history.append({"role": "user", "content": f"[Sent an image] {user_text}"})
-                history.append({"role": "assistant", "content": reply})
-                conversations[chat_id] = history[-MAX_HISTORY:]
-                return reply
-
-            error_code = data.get("error", {}).get("code")
-            if error_code == 429 and attempt == 0:
-                wait_seconds = data.get("error", {}).get("metadata", {}).get("retry_after_seconds", 5)
-                time.sleep(min(wait_seconds, 15))
-                continue
-
-            if error_code == 429:
-                logger.warning(f"Rate limit exceeded for image from {chat_id}")
-                return "🧠 I'm a bit busy right now, please try again in a few seconds 🧠"
-
-            logger.error(f"OpenRouter vision API error: {data}")
-            return f"⚠️ AI error: {data}"
-
-        except Exception as e:
-            logger.error(f"Exception in ask_ai_image: {e}")
-            return f"⚠️ Error talking to AI: {e}"
+    except Exception as e:
+        logger.error(f"Exception in ask_ai_image: {e}")
+        return f"⚠️ Error talking to AI: {e}"
 
 
 # ---------------------------------------------------------------------------
