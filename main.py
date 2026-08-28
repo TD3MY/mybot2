@@ -2205,7 +2205,7 @@ def chat_with_ai(message):
 
         append_user_message(message.from_user.id, "user", message.text + extra)
 
-        reply = ask_ai(message.chat.id, message.text)
+        reply = ask_ai(message.chat.id, message.text + extra)
 
         append_user_message(message.from_user.id, "bot", reply)
 
