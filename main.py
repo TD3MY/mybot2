@@ -427,6 +427,47 @@ def check_badwords(user_text):
         logger.error(f"badword check failed: {e}")
         return False
 
+GEMINI_MODELS = [
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.4-flash",
+    "gemini-3.3-flash",
+]
+
+def ask_gemini(prompt, image_base64=None):
+    user_text = prompt if prompt else "بگو توی این عکس چی می‌بینی؟"
+    parts = [{"text": user_text}]
+    if image_base64:
+        parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_base64}})
+
+    for model in GEMINI_MODELS:
+        try:
+            contents = [{"role": "user", "parts": parts}]
+            response = requests.post(
+                url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}",
+                headers={"Content-Type": "application/json"},
+                json={"contents": contents},
+                timeout=90,
+            )
+            data = response.json()
+
+            if "candidates" in data:
+                reply = data["candidates"][0].get("content", {}).get("parts", [{}])[0].get("text", "🤖")
+                return clean_response(reply)
+
+            err = data.get("error", {})
+            code = err.get("code")
+            if code in [503, 429]:
+                continue
+            logger.error(f"Gemini error [{model}]: {data}")
+            return f"⚠️ AI error: {data}"
+        except Exception as e:
+            logger.error(f"Gemini exception [{model}]: {e}")
+            continue
+
+    return "⚠️ AI error: all models busy"
+
 def ask_ai(chat_id, prompt):
     """Send user's text message to Gemini API and get AI response."""
     history = conversations.setdefault(chat_id, [])
@@ -2000,10 +2041,14 @@ def handle_photo(message):
 
         image_b64 = base64.b64encode(file_bytes).decode('utf-8')
         caption = message.caption or ""
+        extra = ""
+        if message.reply_to_message and message.reply_to_message.text:
+            extra = "\nReply to: " + message.reply_to_message.text[:1000]
+        full_caption = caption + extra
 
-        append_user_message(message.from_user.id, "user", f"[Sent an image] {caption}")
+        append_user_message(message.from_user.id, "user", f"[Sent an image] {full_caption}")
 
-        reply = ask_ai_image(message.chat.id, caption, image_b64)
+        reply = ask_ai_image(message.chat.id, full_caption, image_b64)
 
         append_user_message(message.from_user.id, "bot", reply)
 
