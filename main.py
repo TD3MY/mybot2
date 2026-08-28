@@ -508,16 +508,18 @@ def ask_ai_image(chat_id, caption, image_base64):
     user_text = caption if caption else "بگو توی این عکس چی می‌بینی؟ طبیعی و خلاصه توضیح بده."
 
     try:
-        parts = [{"text": user_text}, {"inline_data": {"mime_type": "image/jpeg", "data": image_base64}}]
-        response = requests.post(
-            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
-            headers={"Content-Type": "application/json"},
-            json={"contents": [{"role": "user", "parts": parts}]},
-            timeout=60,
-        )
-        data = response.json()
+        reply = ask_gemini(user_text, image_base64)
+        history = conversations.setdefault(chat_id, [])
+        history.append({"role": "user", "content": f"[Sent an image] {user_text}"})
+        history.append({"role": "assistant", "content": reply})
+        conversations[chat_id] = history[-MAX_HISTORY:]
+        return reply
 
-        if "candidates" in data:
+    except Exception as e:
+        logger.error(f"Exception in ask_ai_image: {e}")
+        return f"⚠️ Error talking to AI: {e}"
+
+
             reply = data["candidates"][0].get("content", {}).get("parts", [{}])[0].get("text", "🤖")
             reply = clean_response(reply)
             history = conversations.setdefault(chat_id, [])
