@@ -445,6 +445,39 @@ GEMINI_MODELS = [
     "gemini-3.7-flash",
 ]
 
+def generate_pollinations_image(prompt):
+    """Generate an image using Pollinations.ai and return bytes."""
+    try:
+        import urllib.parse
+        safe_prompt = urllib.parse.quote(prompt)
+        url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=768&height=768&nologo=true"
+        r = requests.get(url, timeout=120)
+        if r.status_code == 200 and r.content:
+            return r.content
+        return None
+    except Exception as e:
+        logger.error(f"Pollinations failed: {e}")
+        return None
+
+
+@bot.message_handler(commands=['image'])
+def cmd_image(message):
+    try:
+        prompt = message.text.replace("/image", "", 1).strip()
+        if not prompt:
+            bot.reply_to(message, "Usage: /image YOUR PROMPT")
+            return
+        bot.send_chat_action(message.chat.id, 'upload_photo')
+        img = generate_pollinations_image(prompt)
+        if img:
+            bot.send_photo(message.chat.id, img, caption=f"🖼️ {prompt}")
+        else:
+            bot.reply_to(message, "⚠️ Failed to generate image")
+    except Exception as e:
+        logger.error(f"cmd_image error: {e}")
+        bot.reply_to(message, "⚠️ Error generating image")
+
+
 def ask_gemini(prompt, image_base64=None):
     user_text = prompt if prompt else "بگو توی این عکس چی می‌بینی؟"
     parts = [{"text": user_text}]
@@ -2156,6 +2189,17 @@ def chat_with_ai(message):
 
         if not is_channel_member(bot, message.from_user.id):
             send_join_prompt(message)
+            return
+
+        text_lower = message.text.lower()
+        if "عکس بساز" in text_lower or "تصویر بساز" in text_lower or "make image" in text_lower or "generate image" in text_lower:
+            prompt = message.text
+            bot.send_chat_action(message.chat.id, 'upload_photo')
+            img = generate_pollinations_image(prompt)
+            if img:
+                bot.send_photo(message.chat.id, img, caption="🖼️ generated")
+            else:
+                bot.reply_to(message, "⚠️ Failed to generate image")
             return
 
         bot.send_chat_action(message.chat.id, 'typing')
