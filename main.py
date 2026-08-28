@@ -463,9 +463,11 @@ def ask_gemini(prompt, image_base64=None):
             logger.error(f"Gemini API error: {data}")
             return f"⚠️ AI error: {data}"
 
-    except Exception as e:
-        logger.error(f"Exception in ask_ai: {e}")
-        return f"⚠️ Error talking to AI: {e}"
+        except Exception as e:
+            logger.error(f"Gemini exception [{model}]: {e}")
+            continue
+
+    return "⚠️ AI error: all models busy"
 
 
 def ask_ai_image(chat_id, caption, image_base64):
@@ -487,8 +489,6 @@ def ask_ai_image(chat_id, caption, image_base64):
 
             return reply
 
-        logger.error(f"Gemini vision API error: {data}")
-        return f"⚠️ AI error: {data}"
 
     except Exception as e:
         logger.error(f"Exception in ask_ai_image: {e}")
