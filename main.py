@@ -443,8 +443,6 @@ GEMINI_MODELS = [
     "gemini-3.5-flash",
     "gemini-3.6-flash",
     "gemini-3.7-flash",
-    "gemini-3.4-flash",
-    "gemini-3.3-flash",
 ]
 
 def ask_gemini(prompt, image_base64=None):
