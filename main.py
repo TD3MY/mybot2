@@ -535,7 +535,7 @@ def ask_gemini(prompt, image_base64=None):
             logger.error(f"Gemini exception [{model}]: {e}")
             continue
 
-    return ask_openrouter_fallback(prompt, image_base64)
+    return ask_openrouter_fallback(user_text, image_base64)
 
 
 def ask_ai(chat_id, prompt):
@@ -566,13 +566,7 @@ def ask_ai_image(chat_id, caption, image_base64):
         history.append({"role": "user", "content": f"[Sent an image] {user_text}"})
         history.append({"role": "assistant", "content": reply})
         conversations[chat_id] = history[-MAX_HISTORY:]
-
-    except Exception as e:
-        logger.error(f"Exception in ask_ai_image: {e}")
-        return f"⚠️ Error talking to AI: {e}"
-
-
-
+        return reply
 
     except Exception as e:
         logger.error(f"Exception in ask_ai_image: {e}")
