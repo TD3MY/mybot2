@@ -268,13 +268,17 @@ def _latex_to_plain(expr: str) -> str:
 def send_if_mono(chat_id, text):
     """Send text as monospace if it looks copy-worthy."""
     try:
-        if "```" in text or "http" in text or len(text) > 300:
+        # فقط اگه کد یا لینک یا متن خیلی طولانی باشه
+        if "http" in text or "```" in text or len(text) > 500:
             bot.send_message(chat_id, f"```\n{text}\n```", parse_mode="Markdown")
         else:
             bot.send_message(chat_id, text)
     except Exception as e:
         logger.error(f"send_if_mono failed: {e}")
-        bot.send_message(chat_id, text)
+        try:
+            bot.send_message(chat_id, text)
+        except Exception:
+            pass
 
 
 def clean_response(text: str) -> str:
@@ -1848,7 +1852,7 @@ def handle_group(message):
         prompt = message.text or ""
         bot.send_chat_action(message.chat.id, 'typing')
         reply = ask_ai(message.chat.id, prompt)
-        send_if_mono(message.chat.id, reply)
+        bot.send_message(message.chat.id, reply)
     except Exception as e:
         logger.error(f"group handler error: {e}")
 
@@ -2033,7 +2037,7 @@ def handle_document(message):
             return
 
         reply = ask_ai(message.chat.id, prompt)
-        send_if_mono(message.chat.id, reply)
+        bot.send_message(message.chat.id, reply)
     except Exception as e:
         logger.error(f"document handler error: {e}")
         bot.reply_to(message, "⚠️ خطا در پردازش فایل")
@@ -2101,8 +2105,20 @@ def handle_photo(message):
         image_b64 = base64.b64encode(file_bytes).decode('utf-8')
         caption = message.caption or ""
         extra = ""
-        if message.reply_to_message and message.reply_to_message.text:
-            extra = "\nReply to: " + message.reply_to_message.text[:1000]
+        if message.reply_to_message:
+            if message.reply_to_message.text:
+                extra += "\nReply to text: " + message.reply_to_message.text[:1000]
+            if message.reply_to_message.photo:
+                try:
+                    rp = message.reply_to_message.photo
+                    rfid = rp[len(rp) // 2].file_id
+                    rfinfo = bot.get_file(rfid)
+                    rfurl = f"https://api.telegram.org/file/bot{TOKEN}/{rfinfo.file_path}"
+                    rfr = requests.get(rfurl, timeout=60)
+                    rfb64 = base64.b64encode(rfr.content).decode('utf-8')
+                    extra += "\n[Reply image attached]"
+                except Exception as e:
+                    logger.error(f"failed to fetch replied image: {e}")
         full_caption = caption + extra
 
         append_user_message(message.from_user.id, "user", f"[Sent an image] {full_caption}")
@@ -2116,7 +2132,7 @@ def handle_photo(message):
             users[str(message.from_user.id)]["total_messages"] = users[str(message.from_user.id)].get("total_messages", 0) + 1
             save_users(users)
 
-        send_if_mono(message.chat.id, reply)
+        bot.send_message(message.chat.id, reply)
 
     except Exception as e:
         logger.error(f"Error in handle_photo: {e}")
@@ -2282,7 +2298,7 @@ def chat_with_ai(message):
             users[str(message.from_user.id)]["total_messages"] = users[str(message.from_user.id)].get("total_messages", 0) + 1
             save_users(users)
 
-        send_if_mono(message.chat.id, reply)
+        bot.send_message(message.chat.id, reply)
 
     except Exception as e:
         logger.error(f"Error in chat_with_ai: {e}")
