@@ -461,6 +461,44 @@ def generate_pollinations_image(prompt):
 
 
 
+def ask_openrouter_fallback(prompt, image_base64=None):
+    """Fallback to OpenRouter free model if Gemini is busy."""
+    try:
+        messages = [SYSTEM_PROMPT]
+        if image_base64:
+            messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}},
+                ],
+            })
+        else:
+            messages.append({"role": "user", "content": prompt})
+
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "openrouter/free",
+                "messages": messages,
+            },
+            timeout=60,
+        )
+        data = response.json()
+        if "choices" in data:
+            reply = data["choices"][0]["message"]["content"]
+            return clean_response(reply)
+        logger.error(f"OpenRouter fallback error: {data}")
+        return f"⚠️ AI error: {data}"
+    except Exception as e:
+        logger.error(f"OpenRouter fallback failed: {e}")
+        return "⚠️ Error talking to AI"
+
+
 def ask_gemini(prompt, image_base64=None):
     user_text = prompt if prompt else "بگو توی این عکس چی می‌بینی؟"
     parts = [{"text": user_text}]
