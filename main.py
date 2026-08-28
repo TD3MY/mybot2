@@ -2284,6 +2284,17 @@ def chat_with_ai(message):
         if message.reply_to_message:
             if message.reply_to_message.text:
                 extra += "\nریپلای به: " + message.reply_to_message.text[:1000]
+            if message.reply_to_message.photo:
+                try:
+                    rp = message.reply_to_message.photo
+                    rfid = rp[len(rp) // 2].file_id
+                    rfinfo = bot.get_file(rfid)
+                    rfurl = f"https://api.telegram.org/file/bot{TOKEN}/{rfinfo.file_path}"
+                    rfr = requests.get(rfurl, timeout=60)
+                    rfb64 = base64.b64encode(rfr.content).decode('utf-8')
+                    extra += "\n[Reply image attached]"
+                except Exception as e:
+                    logger.error(f"failed to fetch replied image: {e}")
         if message.forward_from or message.forward_from_chat:
             extra += "\n(پیام فوروارد شده)"
 
