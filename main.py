@@ -265,6 +265,18 @@ def _latex_to_plain(expr: str) -> str:
     return expr.strip()
 
 
+def send_if_mono(chat_id, text):
+    """Send text as monospace if it looks copy-worthy."""
+    try:
+        if "```" in text or "http" in text or len(text) > 300:
+            bot.send_message(chat_id, f"```\n{text}\n```", parse_mode="Markdown")
+        else:
+            bot.send_message(chat_id, text)
+    except Exception as e:
+        logger.error(f"send_if_mono failed: {e}")
+        bot.send_message(chat_id, text)
+
+
 def clean_response(text: str) -> str:
     """Clean AI response: remove Markdown and LaTeX, keep emojis and text."""
     if not text:
@@ -441,7 +453,11 @@ def ask_gemini(prompt, image_base64=None):
     if image_base64:
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_base64}})
 
-    for model in GEMINI_MODELS:
+    import random
+    models = GEMINI_MODELS[:]
+    random.shuffle(models)
+
+    for model in models:
         try:
             contents = [{"role": "user", "parts": parts}]
             response = requests.post(
@@ -1766,7 +1782,7 @@ def handle_group(message):
         prompt = message.text or ""
         bot.send_chat_action(message.chat.id, 'typing')
         reply = ask_ai(message.chat.id, prompt)
-        bot.reply_to(message, reply)
+        send_if_mono(message.chat.id, reply)
     except Exception as e:
         logger.error(f"group handler error: {e}")
 
@@ -1951,7 +1967,7 @@ def handle_document(message):
             return
 
         reply = ask_ai(message.chat.id, prompt)
-        bot.reply_to(message, reply)
+        send_if_mono(message.chat.id, reply)
     except Exception as e:
         logger.error(f"document handler error: {e}")
         bot.reply_to(message, "⚠️ خطا در پردازش فایل")
@@ -2034,7 +2050,7 @@ def handle_photo(message):
             users[str(message.from_user.id)]["total_messages"] = users[str(message.from_user.id)].get("total_messages", 0) + 1
             save_users(users)
 
-        bot.reply_to(message, reply)
+        send_if_mono(message.chat.id, reply)
 
     except Exception as e:
         logger.error(f"Error in handle_photo: {e}")
@@ -2189,7 +2205,7 @@ def chat_with_ai(message):
             users[str(message.from_user.id)]["total_messages"] = users[str(message.from_user.id)].get("total_messages", 0) + 1
             save_users(users)
 
-        bot.reply_to(message, reply)
+        send_if_mono(message.chat.id, reply)
 
     except Exception as e:
         logger.error(f"Error in chat_with_ai: {e}")
