@@ -453,10 +453,15 @@ def ask_gemini(prompt, image_base64=None):
             data = response.json()
 
             if "candidates" in data:
-            return reply
+                reply = data["candidates"][0].get("content", {}).get("parts", [{}])[0].get("text", "🤖")
+                return clean_response(reply)
 
-        logger.error(f"Gemini API error: {data}")
-        return f"⚠️ AI error: {data}"
+            err = data.get("error", {})
+            code = err.get("code")
+            if code in [503, 429]:
+                continue
+            logger.error(f"Gemini API error: {data}")
+            return f"⚠️ AI error: {data}"
 
     except Exception as e:
         logger.error(f"Exception in ask_ai: {e}")
