@@ -470,6 +470,24 @@ def ask_gemini(prompt, image_base64=None):
     return "⚠️ AI error: all models busy"
 
 
+def ask_ai(chat_id, prompt):
+    """Send user's text message to Gemini API and get AI response."""
+    history = conversations.setdefault(chat_id, [])
+    history.append({"role": "user", "content": prompt})
+
+    try:
+        system_text = SYSTEM_PROMPT.get("content", "")
+        full_prompt = system_text + "\n\nUser: " + prompt
+        reply = ask_gemini(full_prompt)
+        reply = clean_response(reply)
+        history.append({"role": "assistant", "content": reply})
+        conversations[chat_id] = history[-MAX_HISTORY:]
+        return reply
+    except Exception as e:
+        logger.error(f"Exception in ask_ai: {e}")
+        return f"⚠️ Error talking to AI: {e}"
+
+
 def ask_ai_image(chat_id, caption, image_base64):
     """Send user's image to Gemini API and get AI response."""
     user_text = caption if caption else "بگو توی این عکس چی می‌بینی؟ طبیعی و خلاصه توضیح بده."
