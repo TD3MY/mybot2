@@ -438,7 +438,7 @@ def ask_ai(chat_id, prompt):
     try:
         contents = [{"role": "user", "parts": [{"text": prompt}]}]
         response = requests.post(
-            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}",
             headers={"Content-Type": "application/json"},
             json={"contents": contents},
             timeout=30,
@@ -467,7 +467,7 @@ def ask_ai_image(chat_id, caption, image_base64):
     try:
         parts = [{"text": user_text}, {"inline_data": {"mime_type": "image/jpeg", "data": image_base64}}]
         response = requests.post(
-            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}",
             headers={"Content-Type": "application/json"},
             json={"contents": [{"role": "user", "parts": parts}]},
             timeout=60,
