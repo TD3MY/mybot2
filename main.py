@@ -445,8 +445,6 @@ def check_badwords(user_text):
 
 GEMINI_MODELS = [
     "gemini-3.5-flash",
-    "gemini-3.6-flash",
-    "gemini-3.7-flash",
 ]
 
 def generate_pollinations_image(prompt):
@@ -520,7 +518,7 @@ def ask_gemini(prompt, image_base64=None):
                 url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}",
                 headers={"Content-Type": "application/json"},
                 json={"contents": contents},
-                timeout=90,
+                timeout=45,
             )
             data = response.json()
 
