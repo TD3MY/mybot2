@@ -27,7 +27,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "5497607248"))
 OPENROUTER_MODEL = "openrouter/auto"
 VISION_MODEL = "openrouter/free"
 
-MAX_HISTORY = 20
+MAX_HISTORY = 30
 conversations = {}
 
 # ---------------------------------------------------------------------------
@@ -548,8 +548,10 @@ def ask_ai(chat_id, prompt):
     history.append({"role": "user", "content": prompt})
 
     try:
+        history = conversations.setdefault(chat_id, [])
+        context = "\n".join([f"{m['role']}: {m['content'][:200]}" for m in history[-10:]])
         system_text = SYSTEM_PROMPT.get("content", "")
-        full_prompt = system_text + "\n\nUser: " + prompt
+        full_prompt = system_text + "\n\nگفتگوی قبلی:\n" + context + "\n\nUser: " + prompt
         reply = ask_gemini(full_prompt)
         reply = clean_response(reply)
         history.append({"role": "assistant", "content": reply})
@@ -2243,7 +2245,7 @@ def chat_with_ai(message):
             return
 
         text_lower = (message.text or "").lower()
-        if "عکس بساز" in text_lower or "تصویر بساز" in text_lower or "make image" in text_lower or "generate image" in text_lower:
+        if any(k in text_lower for k in ["عکس", "تصویر", "بکش", "نقاشی", "draw", "image", "picture", "photo"]) and any(k in text_lower for k in ["بساز", "بده", "می‌خوام", "از", "generate", "make", "create", "draw", "show"]):
             prompt = message.text
             bot.send_chat_action(message.chat.id, 'upload_photo')
             img = generate_pollinations_image(prompt)
