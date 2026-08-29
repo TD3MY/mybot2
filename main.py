@@ -561,11 +561,11 @@ def ask_ai(chat_id, prompt):
 
 
 def ask_ai_image(chat_id, caption, image_base64):
-    """Send user's image to Gemini API and get AI response."""
+    """Send user's image to OpenRouter vision model and get AI response."""
     user_text = caption if caption else "بگو توی این عکس چی می‌بینی؟ طبیعی و خلاصه توضیح بده."
 
     try:
-        reply = ask_gemini(user_text, image_base64)
+        reply = ask_openrouter_fallback(user_text, image_base64)
         history = conversations.setdefault(chat_id, [])
         history.append({"role": "user", "content": f"[Sent an image] {user_text}"})
         history.append({"role": "assistant", "content": reply})
