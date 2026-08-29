@@ -2107,9 +2107,10 @@ def handle_photo(message):
         image_b64 = base64.b64encode(file_bytes).decode('utf-8')
         caption = message.caption or ""
         extra = ""
+        full_caption = caption or ""
         if message.reply_to_message:
             if message.reply_to_message.text:
-                extra += "\nReply to text: " + message.reply_to_message.text[:1000]
+                full_caption += "\nReply to text: " + message.reply_to_message.text[:1000]
             if message.reply_to_message.photo:
                 try:
                     rp = message.reply_to_message.photo
@@ -2119,10 +2120,9 @@ def handle_photo(message):
                     rfr = requests.get(rfurl, timeout=60)
                     rfb64 = base64.b64encode(rfr.content).decode('utf-8')
                     image_b64 = rfb64
-                    full_caption = (caption or "") + "\n[Reply image]"
+                    full_caption += "\n[Reply image attached]"
                 except Exception as e:
                     logger.error(f"failed to fetch replied image: {e}")
-        full_caption = caption + extra
 
         append_user_message(message.from_user.id, "user", f"[Sent an image] {full_caption}")
 
