@@ -2118,7 +2118,8 @@ def handle_photo(message):
                     rfurl = f"https://api.telegram.org/file/bot{TOKEN}/{rfinfo.file_path}"
                     rfr = requests.get(rfurl, timeout=60)
                     rfb64 = base64.b64encode(rfr.content).decode('utf-8')
-                    extra += "\n[Reply image attached]"
+                    image_b64 = rfb64
+                    full_caption = (caption or "") + "\n[Reply image]"
                 except Exception as e:
                     logger.error(f"failed to fetch replied image: {e}")
         full_caption = caption + extra
@@ -2247,6 +2248,13 @@ def chat_with_ai(message):
         text_lower = (message.text or "").lower()
         if any(k in text_lower for k in ["عکس", "تصویر", "بکش", "نقاشی", "draw", "image", "picture", "photo"]) and any(k in text_lower for k in ["بساز", "بده", "می‌خوام", "از", "generate", "make", "create", "draw", "show"]):
             prompt = message.text
+            for stop in ["عکس بساز", "تصویر بساز", "تصویر بده", "عکس بده", "بکش", "نقاشی بکش", "عکس از", "تصویر از", "عکس می‌خوام", "تصویر می‌خوام", "generate image", "create image", "make image", "draw"]:
+                if stop.lower() in prompt.lower():
+                    prompt = prompt.lower().replace(stop.lower(), "", 1).strip()
+                    break
+            prompt = prompt.strip(":،, ")
+            if not prompt:
+                prompt = "a beautiful landscape"
             bot.send_chat_action(message.chat.id, 'upload_photo')
             img = generate_pollinations_image(prompt)
             if img:
