@@ -518,7 +518,7 @@ def ask_gemini(prompt, image_base64=None):
                 url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}",
                 headers={"Content-Type": "application/json"},
                 json={"contents": contents},
-                timeout=45,
+                timeout=60,
             )
             data = response.json()
 
@@ -2104,8 +2104,9 @@ def handle_photo(message):
 
         image_b64 = base64.b64encode(file_bytes).decode('utf-8')
         caption = message.caption or ""
-        extra = ""
         full_caption = caption or ""
+        use_replied_image = False
+
         if message.reply_to_message:
             if message.reply_to_message.text:
                 full_caption += "\nReply to text: " + message.reply_to_message.text[:1000]
@@ -2119,6 +2120,7 @@ def handle_photo(message):
                     rfb64 = base64.b64encode(rfr.content).decode('utf-8')
                     image_b64 = rfb64
                     full_caption += "\n[Reply image attached]"
+                    use_replied_image = True
                 except Exception as e:
                     logger.error(f"failed to fetch replied image: {e}")
 
